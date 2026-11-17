@@ -1,0 +1,82 @@
+{
+  "name": "03 - Invoice & Payment Monitoring (Starter)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "portfolio-payment-monitor",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "pay-webhook",
+      "name": "Payment Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incoming = $input.first().json;\nconst payment = incoming.body ?? incoming;\n\nconst invoiceId = String(payment.invoiceId ?? '').trim();\nconst paymentId = String(payment.paymentId ?? '').trim();\nconst expectedAmount = Number(payment.expectedAmount);\nconst paidAmount = Number(payment.paidAmount);\nconst currency = String(payment.currency ?? 'USD').trim().toUpperCase();\n\nif (!invoiceId || !paymentId || !Number.isFinite(expectedAmount) || !Number.isFinite(paidAmount) || expectedAmount < 0 || paidAmount < 0) {\n  return [{ json: {\n    success: false,\n    workflow: 'Invoice & Payment Monitoring',\n    status: 'INVALID_DATA',\n    message: 'Provide invoiceId, paymentId, expectedAmount and paidAmount as valid values.'\n  }}];\n}\n\nconst amountMatches = Math.abs(expectedAmount - paidAmount) < 0.01;\nconst status = paidAmount === 0\n  ? 'UNPAID'\n  : amountMatches\n    ? 'PAID'\n    : paidAmount < expectedAmount\n      ? 'PARTIALLY_PAID'\n      : 'OVERPAID';\n\nconst riskFlags = [];\nif (payment.duplicate === true) riskFlags.push('Payment marked as duplicate by upstream system');\nif (!amountMatches && paidAmount > 0) riskFlags.push('Paid amount does not match invoice total');\nif (payment.referenceVerified === false) riskFlags.push('Payment reference could not be verified');\n\nreturn [{ json: {\n  success: true,\n  workflow: 'Invoice & Payment Monitoring',\n  reconciliation: {\n    invoiceId, paymentId, currency,\n    expectedAmount, paidAmount,\n    difference: Number((expectedAmount - paidAmount).toFixed(2)),\n    status,\n    riskFlags,\n    requiresManualReview: riskFlags.length > 0 || status === 'OVERPAID'\n  },\n  processedAt: new Date().toISOString(),\n  note: 'Starter reconciliation logic. Production duplicate detection requires checking paymentId against a persistent database or accounting system.'\n}}];"
+      },
+      "id": "pay-reconcile",
+      "name": "Validate & Reconcile Payment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "pay-response",
+      "name": "Return Reconciliation Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        840,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Payment Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Reconcile Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Reconcile Payment": {
+      "main": [
+        [
+          {
+            "node": "Return Reconciliation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
